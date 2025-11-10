@@ -8,6 +8,8 @@ const express = require('express');
 const cors = require('cors');
 const { testConnection } = require('./db/config');
 const { loadZonesCache, getCacheStatus } = require('./services/zoneService');
+const { validateEnvironment } = require('./utils/envValidator');
+const { authenticateApiKey, createRateLimiter, validateInput } = require('./middleware/security');
 
 // Import routes
 const { handleCarrierRates } = require('./routes/rates');
@@ -16,11 +18,58 @@ const inquiriesRoutes = require('./routes/inquiries');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const NODE_ENV = process.env.NODE_ENV || 'development';
+
+// CORS configuration - restrict to Shopify domains in production
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) return callback(null, true);
+    
+    // In development, allow all origins
+    if (NODE_ENV === 'development') {
+      return callback(null, true);
+    }
+    
+    // In production, only allow Shopify domains
+    const allowedOrigins = [
+      /\.myshopify\.com$/,
+      /\.shopify\.com$/,
+      process.env.APP_BASE_URL
+    ].filter(Boolean);
+    
+    const isAllowed = allowedOrigins.some(allowed => {
+      if (typeof allowed === 'string') {
+        return origin === allowed;
+      }
+      return allowed.test(origin);
+    });
+    
+    if (isAllowed) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key']
+};
 
 // Middleware
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(cors(corsOptions));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Security middleware
+app.use(validateInput);
+
+// Rate limiting - stricter for carrier rates endpoint
+app.use('/carrier/rates', createRateLimiter(60000, 200)); // 200 requests per minute
+app.use(createRateLimiter(60000, 100)); // 100 requests per minute for other endpoints
+
+// Authentication middleware for admin endpoints
+app.use(authenticateApiKey);
 
 // Request logging middleware
 app.use((req, res, next) => {
@@ -28,28 +77,33 @@ app.use((req, res, next) => {
   next();
 });
 
-// Health check endpoint
+// Health check endpoint (minimal info for security)
 app.get('/health', async (req, res) => {
   try {
     const dbStatus = await testConnection();
     const cacheStatus = getCacheStatus();
     
+    // Don't expose detailed error messages in production
+    const isProduction = NODE_ENV === 'production';
+    
     res.json({
-      status: 'ok',
+      status: dbStatus.success ? 'ok' : 'error',
       timestamp: new Date().toISOString(),
-      database: dbStatus,
+      database: isProduction 
+        ? { success: dbStatus.success }
+        : dbStatus,
       zonesCache: {
         loaded: cacheStatus.loaded,
-        count: cacheStatus.count,
+        count: isProduction ? undefined : cacheStatus.count,
         status: cacheStatus.loaded ? 'loaded' : 'not loaded'
       },
-      environment: process.env.NODE_ENV || 'development'
+      environment: isProduction ? 'production' : NODE_ENV
     });
   } catch (error) {
     res.status(500).json({
       status: 'error',
       timestamp: new Date().toISOString(),
-      error: error.message
+      error: NODE_ENV === 'production' ? 'Internal server error' : error.message
     });
   }
 });
@@ -74,9 +128,15 @@ app.put('/inquiries/:id/status', inquiriesRoutes.updateInquiryStatusRoute);
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
-  res.status(500).json({
+  
+  // Don't expose error details in production
+  const isProduction = NODE_ENV === 'production';
+  const statusCode = err.statusCode || 500;
+  
+  res.status(statusCode).json({
     error: 'Internal server error',
-    message: err.message
+    message: isProduction ? 'An error occurred' : err.message,
+    ...(isProduction ? {} : { stack: err.stack })
   });
 });
 
@@ -91,6 +151,13 @@ app.use((req, res) => {
 // Initialize server
 async function startServer() {
   try {
+    // Validate environment variables
+    console.log('Validating environment variables...');
+    if (!validateEnvironment()) {
+      process.exit(1);
+    }
+    console.log('Environment variables validated');
+    
     // Test database connection
     console.log('Testing database connection...');
     const dbStatus = await testConnection();
@@ -109,10 +176,13 @@ async function startServer() {
     app.listen(PORT, () => {
       console.log(`\n🚀 Harbour Lane Shipping Module server running`);
       console.log(`📍 Port: ${PORT}`);
+      console.log(`🌍 Environment: ${NODE_ENV}`);
       console.log(`🌐 Health: http://localhost:${PORT}/health`);
       console.log(`📦 Carrier Rates: http://localhost:${PORT}/carrier/rates`);
-      console.log(`\n⚠️  For Shopify callbacks, expose this server via ngrok:`);
-      console.log(`   ngrok http ${PORT}\n`);
+      if (NODE_ENV === 'production') {
+        console.log(`🔒 Production mode: Security features enabled`);
+      }
+      console.log('');
     });
   } catch (error) {
     console.error('Failed to start server:', error);

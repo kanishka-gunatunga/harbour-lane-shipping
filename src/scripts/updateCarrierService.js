@@ -1,6 +1,6 @@
 /**
  * Update existing Carrier Service URL with Shopify
- * Use this when your tunnel URL changes
+ * Use this when your production URL changes
  * 
  * Usage:
  *   node src/scripts/updateCarrierService.js
