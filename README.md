@@ -1,11 +1,11 @@
 # Harbour Lane Shipping Module
 
-A Shopify custom app that provides shipping logic at checkout based on warehouse postcode coverage. The app automatically handles out-of-zone orders via draft orders and inquiries.
+A Shopify custom app that provides shipping logic at checkout based on warehouse postcode coverage. The app automatically handles out-of-zone orders via inquiry records (Shopify creates real orders on checkout completion).
 
 ## Features
 
 - ✅ **Postcode-based shipping rates**: Returns AUD $59.00 for covered postcodes
-- ✅ **Automatic inquiry handling**: Creates draft orders and inquiry records for uncovered postcodes
+- ✅ **Automatic inquiry handling**: Creates inquiry records for uncovered postcodes (orders are created by Shopify on checkout)
 - ✅ **Warehouse & zone management**: Admin API for managing warehouses and postcode zones
 - ✅ **Fast lookups**: In-memory cache for postcode matching (<500ms response time)
 - ✅ **Shopify Carrier Service**: Integrates seamlessly with Shopify checkout
@@ -15,7 +15,7 @@ A Shopify custom app that provides shipping logic at checkout based on warehouse
 
 - **Backend**: Node.js with Express.js
 - **Database**: MySQL 5.7+ or MySQL 8.0+
-- **Shopify Integration**: Admin API (REST) for draft orders and carrier service registration
+- **Shopify Integration**: Admin API (REST) for carrier service registration
 
 ## Prerequisites
 
@@ -95,7 +95,7 @@ SHOPIFY_API_VERSION=2024-01
 4. Click **Create an app**
 5. Enter app name: `Harbour Lane Shipping Module`
 6. Click **Configure Admin API scopes**
-7. Select: `read_shipping`, `write_shipping`, `read_orders`, `write_orders`, `read_draft_orders`, `write_draft_orders`
+7. Select: `read_shipping`, `write_shipping`, `read_orders`, `write_orders`
 8. Click **Save** → **Install app** (if prompted)
 9. Go to **API credentials** tab
 10. Click **Reveal token once** under **Admin API access token**
@@ -243,8 +243,9 @@ curl -H "Authorization: Bearer your-api-key" https://your-domain.com/warehouses
 ### inquiries
 
 - Stores inquiry records for uncovered postcodes
-- Links to Shopify draft orders (if created)
+- Links to Shopify orders via `shop_order_id` (when order is created on checkout)
 - Tracks customer contact info and order details
+- Note: When customer selects "Inquiry Required" ($0 shipping), Shopify creates a REAL order on checkout completion
 
 ## Performance Optimization
 

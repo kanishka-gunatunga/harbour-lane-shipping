@@ -50,7 +50,7 @@ async function createDraftOrder(orderData) {
           phone: destination.phone || customer.phone || ''
         },
         note: `Shipping inquiry required for postcode: ${destination.postal_code || destination.postcode || 'Unknown'}. This order requires manual shipping quote.`,
-        tags: ['shipping-inquiry', 'manual-quote']
+        tags: 'shipping-inquiry, manual-quote'
       }
     };
     
@@ -62,7 +62,12 @@ async function createDraftOrder(orderData) {
     
     return response.data.draft_order;
   } catch (error) {
-    console.error('Error creating draft order:', error.response?.data || error.message);
+    // Log detailed error for debugging
+    if (error.response?.data) {
+      console.error('Error creating draft order:', JSON.stringify(error.response.data, null, 2));
+    } else {
+      console.error('Error creating draft order:', error.message);
+    }
     throw error;
   }
 }
