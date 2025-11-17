@@ -191,6 +191,10 @@ curl -H "Authorization: Bearer your-api-key" https://your-domain.com/warehouses
 
 ## API Endpoints
 
+### Root
+
+- `GET /` - API information and available endpoints (no authentication required)
+
 ### Carrier Service
 
 - `POST /carrier/rates` - Main endpoint called by Shopify during checkout (no authentication required)

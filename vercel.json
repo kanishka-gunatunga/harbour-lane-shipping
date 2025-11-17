@@ -18,6 +18,11 @@
       "methods": ["GET"]
     },
     {
+      "src": "/",
+      "dest": "src/server.js",
+      "methods": ["GET"]
+    },
+    {
       "src": "/warehouses/(.*)",
       "dest": "src/server.js"
     },
@@ -37,6 +42,3 @@
     }
   ]
 }
-
-
-

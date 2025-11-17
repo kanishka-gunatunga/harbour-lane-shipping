@@ -25,26 +25,26 @@ const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests with no origin (mobile apps, Postman, etc.)
     if (!origin) return callback(null, true);
-    
+
     // In development, allow all origins
     if (NODE_ENV === 'development') {
       return callback(null, true);
     }
-    
+
     // In production, only allow Shopify domains
     const allowedOrigins = [
       /\.myshopify\.com$/,
       /\.shopify\.com$/,
       process.env.APP_BASE_URL
     ].filter(Boolean);
-    
+
     const isAllowed = allowedOrigins.some(allowed => {
       if (typeof allowed === 'string') {
         return origin === allowed;
       }
       return allowed.test(origin);
     });
-    
+
     if (isAllowed) {
       callback(null, true);
     } else {
@@ -82,14 +82,14 @@ app.get('/health', async (req, res) => {
   try {
     const dbStatus = await testConnection();
     const cacheStatus = getCacheStatus();
-    
+
     // Don't expose detailed error messages in production
     const isProduction = NODE_ENV === 'production';
-    
+
     res.json({
       status: dbStatus.success ? 'ok' : 'error',
       timestamp: new Date().toISOString(),
-      database: isProduction 
+      database: isProduction
         ? { success: dbStatus.success }
         : dbStatus,
       zonesCache: {
@@ -106,6 +106,22 @@ app.get('/health', async (req, res) => {
       error: NODE_ENV === 'production' ? 'Internal server error' : error.message
     });
   }
+});
+
+// Root route - API information
+app.get('/', (req, res) => {
+  res.json({
+    name: 'Harbour Lane Shipping Module',
+    version: '1.0.0',
+    status: 'running',
+    endpoints: {
+      health: '/health',
+      carrierRates: '/carrier/rates',
+      warehouses: '/warehouses',
+      inquiries: '/inquiries'
+    },
+    documentation: 'See README.md for API documentation'
+  });
 });
 
 // Carrier Service endpoint (main endpoint called by Shopify)
@@ -128,11 +144,11 @@ app.put('/inquiries/:id/status', inquiriesRoutes.updateInquiryStatusRoute);
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
-  
+
   // Don't expose error details in production
   const isProduction = NODE_ENV === 'production';
   const statusCode = err.statusCode || 500;
-  
+
   res.status(statusCode).json({
     error: 'Internal server error',
     message: isProduction ? 'An error occurred' : err.message,
@@ -157,7 +173,7 @@ async function startServer() {
       process.exit(1);
     }
     console.log('Environment variables validated');
-    
+
     // Start server immediately (don't wait for database)
     // This is critical for serverless environments where cold starts need to be fast
     app.listen(PORT, () => {
@@ -171,10 +187,10 @@ async function startServer() {
       }
       console.log('');
     });
-    
+
     // Initialize database connection in background (non-blocking)
     initializeDatabase();
-    
+
   } catch (error) {
     console.error('Failed to start server:', error);
     process.exit(1);
@@ -184,21 +200,21 @@ async function startServer() {
 // Initialize database connection in background
 async function initializeDatabase() {
   console.log('Initializing database connection (non-blocking)...');
-  
+
   // Test database connection with timeout
   const dbTimeout = setTimeout(() => {
     console.warn('⚠️  Database connection is taking longer than expected...');
     console.warn('   Server will continue, but database operations may fail initially.');
     console.warn('   Connection will be retried automatically on first use.');
   }, 5000);
-  
+
   try {
     const dbStatus = await testConnection(3, 2000);
     clearTimeout(dbTimeout);
-    
+
     if (dbStatus.success) {
       console.log('✅ Database connection successful');
-      
+
       // Load zones cache in background
       loadZonesCache().then(() => {
         console.log('✅ Zones cache loaded');
