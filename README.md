@@ -1,6 +1,6 @@
 # Harbour Lane Shipping Module
 
-A Shopify custom app that provides shipping logic at checkout based on warehouse postcode coverage. The app automatically handles out-of-zone orders via inquiry records (Shopify creates real orders on checkout completion).
+A Shopify custom app that provides shipping logic at checkout based on warehouse postcode coverage. The app automatically handles out-of-zone orders via inquiry records. When customers complete checkout, Shopify creates real orders automatically.
 
 ## Features
 

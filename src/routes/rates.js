@@ -5,7 +5,6 @@
  */
 
 const { findMatchingZone } = require('../services/zoneService');
-const { createDraftOrder } = require('../services/shopifyService');
 const { createInquiry } = require('../services/inquiryService');
 const { extractPostcodeFromPayload } = require('../utils/postcode');
 
@@ -118,33 +117,22 @@ async function handleCarrierRates(req, res) {
       });
     }
 
-    // Postcode does NOT match any zone - create inquiry and draft order
-    console.log(`⚠️ [${requestId}] Postcode ${postcode} does not match any zone - creating inquiry and draft order`);
+    // Postcode does NOT match any zone - create inquiry record only
+    // Note: We DON'T create draft orders here because:
+    // 1. Carrier service is called during checkout (before payment)
+    // 2. Customer might abandon checkout → orphaned draft orders
+    // 3. When customer completes checkout, Shopify creates REAL order automatically
+    // 4. We'll link inquiries to real orders via webhooks or manually
+    console.log(`⚠️ [${requestId}] Postcode ${postcode} does not match any zone - creating inquiry`);
 
     const customerInfo = extractCustomerInfo(req.body);
     const items = req.body?.rate?.items || [];
     const productDetails = formatProductDetails(items);
 
-    let draftOrderId = null;
-
-    // Create draft order in Shopify (for admin to review before customer completes checkout)
-    try {
-      const draftOrder = await createDraftOrder({
-        customer: customerInfo,
-        destination: customerInfo,
-        items: items
-      });
-      draftOrderId = draftOrder.id;
-      console.log(`✅ [${requestId}] Draft order created: ${draftOrderId}`);
-    } catch (draftError) {
-      console.error(`❌ [${requestId}] Failed to create draft order (continuing with inquiry):`, draftError.message);
-      // Continue with inquiry creation even if draft order fails
-    }
-
-    // Create inquiry record in database
+    // Create inquiry record in database (no draft order - Shopify will create real order when customer pays)
     try {
       const inquiry = await createInquiry({
-        draft_order_id: draftOrderId,
+        draft_order_id: null, // Will be linked to real order via webhook when customer completes checkout
         customer_name: customerInfo.first_name && customerInfo.last_name
           ? `${customerInfo.first_name} ${customerInfo.last_name}`.trim()
           : customerInfo.first_name || 'Customer',
