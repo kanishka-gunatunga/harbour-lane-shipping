@@ -1,0 +1,42 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "src/server.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/carrier/rates",
+      "dest": "src/server.js",
+      "methods": ["POST"]
+    },
+    {
+      "src": "/health",
+      "dest": "src/server.js",
+      "methods": ["GET"]
+    },
+    {
+      "src": "/warehouses/(.*)",
+      "dest": "src/server.js"
+    },
+    {
+      "src": "/inquiries/(.*)",
+      "dest": "src/server.js"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "src/server.js"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/health-check",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}
+
+
+

@@ -14,6 +14,7 @@ const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Load all zones from database into memory cache
+ * Handles database errors gracefully
  */
 async function loadZonesCache() {
   try {
@@ -35,29 +36,59 @@ async function loadZonesCache() {
     console.log(`Loaded ${zones.length} zones into cache`);
     return zones;
   } catch (error) {
-    console.error('Error loading zones cache:', error);
-    throw error;
+    console.error('Error loading zones cache:', error.message);
+    // Don't throw - allow server to continue
+    // Cache will remain null/empty, and we'll handle it in findMatchingZone
+    if (error.code === 'ETIMEDOUT' || error.code === 'ECONNREFUSED') {
+      console.warn('⚠️  Database connection issue - zones cache not loaded');
+      console.warn('   Will retry on next request');
+    }
+    // Return empty array so cache is marked as attempted
+    zonesCache = [];
+    cacheTimestamp = Date.now();
+    return [];
   }
 }
 
 /**
  * Refresh cache if expired
+ * Handles database errors gracefully
  */
 async function ensureCacheFresh() {
   if (!zonesCache || !cacheTimestamp || (Date.now() - cacheTimestamp > CACHE_TTL)) {
-    await loadZonesCache();
+    try {
+      await loadZonesCache();
+    } catch (error) {
+      console.warn('⚠️  Failed to refresh zones cache:', error.message);
+      // Continue with existing cache if available
+      if (!zonesCache || zonesCache.length === 0) {
+        console.warn('   No zones available - all postcodes will return inquiry option');
+      }
+    }
   }
 }
 
 /**
  * Find matching warehouse zone for a postcode
  * Returns warehouse info if match found, null otherwise
+ * Handles database/cache errors gracefully
  */
 async function findMatchingZone(postcode) {
-  await ensureCacheFresh();
+  try {
+    await ensureCacheFresh();
+  } catch (error) {
+    console.warn('⚠️  Error ensuring cache fresh:', error.message);
+    // Continue with existing cache or empty cache
+  }
   
   const normalized = normalizePostcode(postcode);
   if (!normalized) {
+    return null;
+  }
+  
+  // If cache is empty or null, return null (will trigger inquiry)
+  if (!zonesCache || zonesCache.length === 0) {
+    console.warn('⚠️  Zones cache is empty - returning null (inquiry option)');
     return null;
   }
   

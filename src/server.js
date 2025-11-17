@@ -148,7 +148,7 @@ app.use((req, res) => {
   });
 });
 
-// Initialize server
+// Initialize server (non-blocking for database)
 async function startServer() {
   try {
     // Validate environment variables
@@ -158,21 +158,8 @@ async function startServer() {
     }
     console.log('Environment variables validated');
     
-    // Test database connection
-    console.log('Testing database connection...');
-    const dbStatus = await testConnection();
-    if (!dbStatus.success) {
-      console.error('Database connection failed:', dbStatus.message);
-      process.exit(1);
-    }
-    console.log('Database connection successful');
-    
-    // Load zones cache
-    console.log('Loading zones cache...');
-    await loadZonesCache();
-    console.log('Zones cache loaded');
-    
-    // Start server
+    // Start server immediately (don't wait for database)
+    // This is critical for serverless environments where cold starts need to be fast
     app.listen(PORT, () => {
       console.log(`\n🚀 Harbour Lane Shipping Module server running`);
       console.log(`📍 Port: ${PORT}`);
@@ -184,9 +171,51 @@ async function startServer() {
       }
       console.log('');
     });
+    
+    // Initialize database connection in background (non-blocking)
+    initializeDatabase();
+    
   } catch (error) {
     console.error('Failed to start server:', error);
     process.exit(1);
+  }
+}
+
+// Initialize database connection in background
+async function initializeDatabase() {
+  console.log('Initializing database connection (non-blocking)...');
+  
+  // Test database connection with timeout
+  const dbTimeout = setTimeout(() => {
+    console.warn('⚠️  Database connection is taking longer than expected...');
+    console.warn('   Server will continue, but database operations may fail initially.');
+    console.warn('   Connection will be retried automatically on first use.');
+  }, 5000);
+  
+  try {
+    const dbStatus = await testConnection(3, 2000);
+    clearTimeout(dbTimeout);
+    
+    if (dbStatus.success) {
+      console.log('✅ Database connection successful');
+      
+      // Load zones cache in background
+      loadZonesCache().then(() => {
+        console.log('✅ Zones cache loaded');
+      }).catch(error => {
+        console.error('⚠️  Failed to load zones cache initially:', error.message);
+        console.error('   Cache will be loaded on first request');
+      });
+    } else {
+      console.warn('⚠️  Database connection failed:', dbStatus.message);
+      console.warn('   Server will continue, but database operations may fail.');
+      console.warn('   Connection will be retried automatically on first use.');
+    }
+  } catch (error) {
+    clearTimeout(dbTimeout);
+    console.warn('⚠️  Database initialization error:', error.message);
+    console.warn('   Server will continue, but database operations may fail.');
+    console.warn('   Connection will be retried automatically on first use.');
   }
 }
 

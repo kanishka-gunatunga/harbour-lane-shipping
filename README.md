@@ -37,20 +37,25 @@ npm install
 Create the database and run the schema:
 
 **Linux/Mac/Git Bash:**
+
 ```bash
 mysql -u root -p < src/db/schema.sql
 ```
 
 **Windows PowerShell:**
+
 ```powershell
 Get-Content src/db/schema.sql | mysql -u root -p
 ```
 
 **Interactive MySQL (all platforms):**
+
 ```bash
 mysql -u root -p
 ```
+
 Then in MySQL prompt:
+
 ```sql
 source src/db/schema.sql;
 ```
@@ -125,11 +130,13 @@ The server will start on `http://localhost:5000` (or your configured PORT).
 ### Environment Setup
 
 1. **Set NODE_ENV to production**:
+
    ```env
    NODE_ENV=production
    ```
 
 2. **Set a secure API_KEY** for admin endpoint protection:
+
    ```env
    API_KEY=your-very-secure-random-api-key
    ```
@@ -220,14 +227,17 @@ curl -H "Authorization: Bearer your-api-key" https://your-domain.com/warehouses
 ## Database Schema
 
 ### warehouses
+
 - Stores warehouse information
 - Links to Shopify location (optional)
 
 ### zones
+
 - Stores postcode zones per warehouse
 - Supports exact matches and prefix patterns (e.g., `30*` matches all postcodes starting with `30`)
 
 ### inquiries
+
 - Stores inquiry records for uncovered postcodes
 - Links to Shopify draft orders (if created)
 - Tracks customer contact info and order details
@@ -237,6 +247,11 @@ curl -H "Authorization: Bearer your-api-key" https://your-domain.com/warehouses
 - Zones are cached in memory (5-minute TTL)
 - Cache refreshes automatically after admin updates
 - Consider Redis for distributed caching in production
+
+## Documentation
+
+- **README.md** (this file) - Setup and usage guide
+- **PERMANENT_SOLUTION.md** - Comprehensive troubleshooting guide for carrier service issues
 
 ## Troubleshooting
 
@@ -269,6 +284,11 @@ This means Shopify isn't getting valid responses from your endpoint. Check:
 2. Check database credentials in `.env`
 3. Ensure database exists: `SHOW DATABASES;`
 4. Test connection: `mysql -u root -p -h your-host`
+5. **Note**: Server handles database connection failures gracefully:
+   - Non-blocking startup (server starts immediately)
+   - Automatic retry logic (3 attempts with 2s delays)
+   - Graceful fallback (returns inquiry option if DB unavailable)
+6. Run diagnostic: `npm run diagnose`
 
 ### Authentication Errors
 
@@ -317,6 +337,66 @@ curl -H "X-API-Key: your-api-key" https://your-domain.com/inquiries
 
 ISC
 
+## Diagnostic Tools
+
+### Run Comprehensive Diagnostic
+
+```bash
+npm run diagnose
+```
+
+Checks environment variables, carrier service registration, shipping zones, endpoint accessibility, database, and zone cache.
+
+### Run Health Check (with auto-recovery)
+
+```bash
+npm run health-check
+```
+
+Monitors carrier service status and attempts automatic recovery of common issues.
+
+### Test Database Connection
+
+```bash
+npm run test-db
+```
+
+Tests database connection and verifies schema.
+
+## Deployment
+
+### Pre-Deployment Checklist
+
+- [ ] Set all environment variables in Vercel
+- [ ] Run `npm run diagnose` - all checks pass
+- [ ] Run `npm run health-check` - all systems operational
+- [ ] Test database connection: `npm run test-db`
+- [ ] Register carrier service: `npm run register-carrier`
+- [ ] Verify carrier service in Shopify admin
+- [ ] Test checkout with real postcodes
+
+### Environment Variables (Vercel)
+
+Required variables:
+
+- `DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
+- `SHOPIFY_STORE_DOMAIN`, `SHOPIFY_ACCESS_TOKEN`
+- `APP_BASE_URL` (must be HTTPS)
+- `API_KEY`
+- `NODE_ENV=production`
+
+### After Deployment
+
+1. Run diagnostic: `npm run diagnose`
+2. Register carrier service: `npm run register-carrier`
+3. Monitor Vercel logs for carrier service requests
+4. Test checkout in Shopify
+
 ## Support
 
-For issues or questions, please check the logs and ensure all environment variables are correctly set.
+For issues or questions:
+
+1. Check `PERMANENT_SOLUTION.md` for carrier service troubleshooting
+2. Run `npm run diagnose` for automated checks
+3. Check server logs for detailed error messages
+4. Database connection issues: Server now handles failures gracefully (non-blocking startup with retry logic)

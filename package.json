@@ -10,7 +10,9 @@
     "test-db": "node src/scripts/testDbConnection.js",
     "register-carrier": "node src/scripts/registerCarrierService.js",
     "update-carrier": "node src/scripts/updateCarrierService.js",
-    "find-rates": "node src/scripts/findShippingRates.js"
+    "find-rates": "node src/scripts/findShippingRates.js",
+    "diagnose": "node src/scripts/diagnoseCarrierService.js",
+    "health-check": "node src/scripts/healthCheckCarrierService.js"
   },
   "keywords": [
     "shopify",

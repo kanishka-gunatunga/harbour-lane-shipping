@@ -32,9 +32,13 @@ coverage/
 .cache/
 .history/
 
-# Database dumps
-*.sql
+# Documentation files (keep only README.md)
+*.md
+!README.md
+
+# Database dumps (but keep schema.sql)
 *.db
+# Note: schema.sql is intentionally tracked in git
 
 # Shopify app generated files
 shopify.app.toml
@@ -43,3 +47,4 @@ shopify-cli.yml
 # Misc
 *.swp
 *.swo
+*~
