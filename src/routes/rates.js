@@ -6,6 +6,7 @@
 
 const { findMatchingZone } = require('../services/zoneService');
 const { createInquiry } = require('../services/inquiryService');
+const { createDraftOrder } = require('../services/shopifyService');
 const { extractPostcodeFromPayload } = require('../utils/postcode');
 
 // Standard shipping rate in cents (AUD $59.00)
@@ -117,22 +118,52 @@ async function handleCarrierRates(req, res) {
       });
     }
 
-    // Postcode does NOT match any zone - create inquiry record only
-    // Note: We DON'T create draft orders here because:
-    // 1. Carrier service is called during checkout (before payment)
-    // 2. Customer might abandon checkout → orphaned draft orders
-    // 3. When customer completes checkout, Shopify creates REAL order automatically
-    // 4. We'll link inquiries to real orders via webhooks or manually
-    console.log(`⚠️ [${requestId}] Postcode ${postcode} does not match any zone - creating inquiry`);
+    // Postcode does NOT match any zone - show inquiry option
+    // Return inquiry rate so customer can see it, but checkout will be blocked via Checkout Extension
+    console.log(`⚠️ [${requestId}] Postcode ${postcode} does not match any zone - showing inquiry option`);
 
     const customerInfo = extractCustomerInfo(req.body);
     const items = req.body?.rate?.items || [];
     const productDetails = formatProductDetails(items);
+    const rate = req.body?.rate || {};
+    const destination = rate.destination || {};
 
-    // Create inquiry record in database (no draft order - Shopify will create real order when customer pays)
+    let draftOrderId = null;
+
+    // Create draft order in Shopify (so store can see the order)
+    // We create it immediately when inquiry option is shown
+    try {
+      const draftOrder = await createDraftOrder({
+        customer: {
+          first_name: customerInfo.first_name,
+          last_name: customerInfo.last_name,
+          email: customerInfo.email,
+          phone: customerInfo.phone
+        },
+        destination: {
+          first_name: customerInfo.first_name,
+          last_name: customerInfo.last_name,
+          address1: customerInfo.address,
+          city: customerInfo.city,
+          province: customerInfo.province,
+          country: customerInfo.country,
+          postal_code: postcode,
+          phone: customerInfo.phone
+        },
+        items: items
+      });
+      draftOrderId = draftOrder.id;
+      console.log(`✅ [${requestId}] Draft order created: ${draftOrderId}`);
+    } catch (draftError) {
+      console.error(`❌ [${requestId}] Failed to create draft order:`, draftError.message);
+      // Continue to create inquiry even if draft order fails
+    }
+
+    // Create inquiry record in database
     try {
       const inquiry = await createInquiry({
-        draft_order_id: null, // Will be linked to real order via webhook when customer completes checkout
+        shop_order_id: null, // Will be set if store manually completes order later
+        draft_order_id: draftOrderId,
         customer_name: customerInfo.first_name && customerInfo.last_name
           ? `${customerInfo.first_name} ${customerInfo.last_name}`.trim()
           : customerInfo.first_name || 'Customer',
@@ -151,9 +182,11 @@ async function handleCarrierRates(req, res) {
       // Continue to return response even if inquiry creation fails
     }
 
-    // Return inquiry-required shipping option
+    // Return inquiry rate so customer can see the option
+    // Blockit app (or custom checkout extension) will block checkout when this rate is selected
+    // Service code 'INQUIRY' is used by Blockit to detect and block checkout
     const responseTime = Date.now() - startTime;
-    console.log(`📤 [${requestId}] Carrier rates response: INQUIRY (${responseTime}ms)`);
+    console.log(`📤 [${requestId}] Carrier rates response: INQUIRY_OPTION (${responseTime}ms)`);
 
     return res.json({
       rates: [{
@@ -161,7 +194,7 @@ async function handleCarrierRates(req, res) {
         service_code: 'INQUIRY',
         total_price: '0',
         currency: req.body?.rate?.currency || 'AUD',
-        description: 'No automated rate for this postcode; store will contact you to finalize shipping.'
+        description: 'No automated rate for this postcode; store will contact you to finalize shipping. If delivery is possible, you will receive your order.'
       }]
     });
 
@@ -176,7 +209,8 @@ async function handleCarrierRates(req, res) {
     const responseTime = Date.now() - startTime;
     console.log(`📤 [${requestId}] Carrier rates response: ERROR FALLBACK (${responseTime}ms)`);
 
-    // Fallback: return inquiry option so checkout can proceed
+    // Fallback: return inquiry option so customer can see something
+    // Store should investigate why carrier service is failing
     return res.status(200).json({
       rates: [{
         service_name: 'Inquiry Required — We will contact you',

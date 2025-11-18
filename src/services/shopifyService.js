@@ -15,12 +15,12 @@ async function createDraftOrder(orderData) {
   try {
     const apiUrl = getAdminApiUrl();
     const headers = getAdminHeaders();
-    
+
     // Extract customer info from carrier request
     const customer = orderData.customer || {};
     const items = orderData.items || [];
     const destination = orderData.destination || {};
-    
+
     // Build line items for draft order
     const lineItems = items.map(item => ({
       title: item.title || 'Product',
@@ -28,7 +28,7 @@ async function createDraftOrder(orderData) {
       price: item.price ? String(item.price / 100) : '0.00', // Shopify expects decimal string
       grams: item.grams || 0
     }));
-    
+
     // Build draft order payload
     const draftOrderPayload = {
       draft_order: {
@@ -49,17 +49,17 @@ async function createDraftOrder(orderData) {
           zip: destination.postal_code || destination.postcode || '',
           phone: destination.phone || customer.phone || ''
         },
-        note: `Shipping inquiry required for postcode: ${destination.postal_code || destination.postcode || 'Unknown'}. This order requires manual shipping quote.`,
-        tags: 'shipping-inquiry, manual-quote'
+        note: `Shipping inquiry required for postcode: ${destination.postal_code || destination.postcode || 'Unknown'}. This order requires manual shipping quote. Customer checkout was blocked due to out-of-zone delivery.`,
+        tags: 'shipping-inquiry,manual-quote,checkout-blocked'
       }
     };
-    
+
     const response = await axios.post(
       `${apiUrl}/draft_orders.json`,
       draftOrderPayload,
       { headers }
     );
-    
+
     return response.data.draft_order;
   } catch (error) {
     // Log detailed error for debugging
@@ -81,7 +81,7 @@ async function registerCarrierService(callbackUrl) {
   try {
     const apiUrl = getAdminApiUrl();
     const headers = getAdminHeaders();
-    
+
     const payload = {
       carrier_service: {
         name: 'Harbour Lane Delivery',
@@ -89,13 +89,13 @@ async function registerCarrierService(callbackUrl) {
         service_discovery: true
       }
     };
-    
+
     const response = await axios.post(
       `${apiUrl}/carrier_services.json`,
       payload,
       { headers }
     );
-    
+
     return response.data.carrier_service;
   } catch (error) {
     if (error.response?.status === 422 && error.response?.data?.errors) {
@@ -114,12 +114,12 @@ async function getCarrierServices() {
   try {
     const apiUrl = getAdminApiUrl();
     const headers = getAdminHeaders();
-    
+
     const response = await axios.get(
       `${apiUrl}/carrier_services.json`,
       { headers }
     );
-    
+
     return response.data.carrier_services;
   } catch (error) {
     console.error('Error fetching carrier services:', error.response?.data || error.message);
@@ -137,7 +137,7 @@ async function updateCarrierService(carrierServiceId, callbackUrl) {
   try {
     const apiUrl = getAdminApiUrl();
     const headers = getAdminHeaders();
-    
+
     const payload = {
       carrier_service: {
         id: carrierServiceId,
@@ -145,13 +145,13 @@ async function updateCarrierService(carrierServiceId, callbackUrl) {
         service_discovery: true
       }
     };
-    
+
     const response = await axios.put(
       `${apiUrl}/carrier_services/${carrierServiceId}.json`,
       payload,
       { headers }
     );
-    
+
     return response.data.carrier_service;
   } catch (error) {
     console.error('Error updating carrier service:', error.response?.data || error.message);

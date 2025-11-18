@@ -1,0 +1,14 @@
+{
+  "name": "harbour-lane-checkout-extension",
+  "version": "1.0.0",
+  "description": "Shopify Checkout Extension to block checkout for inquiry orders",
+  "scripts": {
+    "build": "shopify app build",
+    "dev": "shopify app dev",
+    "deploy": "shopify app deploy"
+  },
+  "dependencies": {
+    "@shopify/cli": "^3.0.0"
+  }
+}
+

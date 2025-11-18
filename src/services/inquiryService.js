@@ -23,7 +23,7 @@ async function createInquiry(inquiryData) {
       product_details,
       status = 'new'
     } = inquiryData;
-    
+
     const result = await query(`
       INSERT INTO inquiries (
         shop_order_id,
@@ -47,12 +47,12 @@ async function createInquiry(inquiryData) {
       product_details || null,
       status
     ]);
-    
+
     // Fetch the created inquiry
     const inquiry = await query(`
       SELECT * FROM inquiries WHERE id = ?
     `, [result.insertId]);
-    
+
     return inquiry[0];
   } catch (error) {
     console.error('Error creating inquiry:', error);
@@ -69,24 +69,24 @@ async function getInquiries(filters = {}) {
   try {
     let sql = 'SELECT * FROM inquiries WHERE 1=1';
     const params = [];
-    
+
     if (filters.status) {
       sql += ' AND status = ?';
       params.push(filters.status);
     }
-    
+
     if (filters.postcode) {
       sql += ' AND postcode = ?';
       params.push(filters.postcode);
     }
-    
+
     sql += ' ORDER BY created_at DESC';
-    
+
     if (filters.limit) {
       sql += ' LIMIT ?';
       params.push(filters.limit);
     }
-    
+
     return await query(sql, params);
   } catch (error) {
     console.error('Error fetching inquiries:', error);
@@ -102,7 +102,7 @@ async function updateInquiryStatus(inquiryId, status) {
     await query(`
       UPDATE inquiries SET status = ? WHERE id = ?
     `, [status, inquiryId]);
-    
+
     return await query('SELECT * FROM inquiries WHERE id = ?', [inquiryId]);
   } catch (error) {
     console.error('Error updating inquiry status:', error);

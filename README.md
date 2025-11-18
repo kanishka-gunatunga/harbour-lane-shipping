@@ -1,11 +1,13 @@
 # Harbour Lane Shipping Module
 
-A Shopify custom app that provides shipping logic at checkout based on warehouse postcode coverage. The app automatically handles out-of-zone orders via inquiry records. When customers complete checkout, Shopify creates real orders automatically.
+A Shopify carrier service that provides shipping logic at checkout based on warehouse postcode coverage. For out-of-zone customers, the app shows an inquiry option, creates draft orders + inquiries automatically, and integrates with Blockit app to block checkout.
 
 ## Features
 
 - ✅ **Postcode-based shipping rates**: Returns AUD $59.00 for covered postcodes
-- ✅ **Automatic inquiry handling**: Creates inquiry records for uncovered postcodes (orders are created by Shopify on checkout)
+- ✅ **Checkout blocking**: Automatically blocks checkout for out-of-zone postcodes (returns empty rates)
+- ✅ **Automatic draft orders**: Creates draft orders in Shopify when out-of-zone is detected
+- ✅ **Inquiry tracking**: Creates inquiry records in database for all out-of-zone attempts
 - ✅ **Warehouse & zone management**: Admin API for managing warehouses and postcode zones
 - ✅ **Fast lookups**: In-memory cache for postcode matching (<500ms response time)
 - ✅ **Shopify Carrier Service**: Integrates seamlessly with Shopify checkout

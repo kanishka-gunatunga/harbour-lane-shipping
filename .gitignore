@@ -32,16 +32,21 @@ coverage/
 .cache/
 .history/
 
-# Documentation files (keep only README.md)
+# Documentation files (keep important guides)
 *.md
 !README.md
+!BLOCKIT_SETUP_GUIDE.md
+!IMPLEMENTATION_PLAN.md
+!QUICK_START_BLOCKIT.md
+!DEPLOYMENT_README.md
+!PRE_DEPLOYMENT_CHECKLIST.md
 
 # Database dumps (but keep schema.sql)
 *.db
 # Note: schema.sql is intentionally tracked in git
 
-# Shopify app generated files
-shopify.app.toml
+# Shopify app generated files (keep checkout extension as backup)
+# shopify.app.toml  # Keep for checkout extension backup
 shopify-cli.yml
 
 # Misc
