@@ -5,7 +5,7 @@
  */
 
 const { findMatchingZone } = require('../services/zoneService');
-const { createInquiry } = require('../services/inquiryService');
+const { createInquiry, findRecentInquiry, updateInquiry } = require('../services/inquiryService');
 const { createDraftOrder } = require('../services/shopifyService');
 const { extractPostcodeFromPayload } = require('../utils/postcode');
 
@@ -29,22 +29,39 @@ function formatProductDetails(items) {
 
 /**
  * Extract customer information from carrier request
+ * Note: Shopify carrier service callback has limited customer data
+ * - destination.name might contain full name
+ * - email is often NOT provided at this checkout stage
  */
 function extractCustomerInfo(payload) {
   const rate = payload?.rate || {};
   const destination = rate.destination || {};
   const customer = rate.customer || {};
 
+  // Parse name - Shopify often sends full name in 'name' field
+  let firstName = customer.first_name || destination.first_name || null;
+  let lastName = customer.last_name || destination.last_name || null;
+
+  // If no first/last name but we have 'name', split it
+  if (!firstName && destination.name) {
+    const nameParts = destination.name.trim().split(' ');
+    firstName = nameParts[0] || null;
+    lastName = nameParts.slice(1).join(' ') || null;
+  }
+
   return {
-    first_name: customer.first_name || destination.first_name || null,
-    last_name: customer.last_name || destination.last_name || null,
+    first_name: firstName,
+    last_name: lastName,
+    name: destination.name || null, // Keep original full name too
     email: customer.email || destination.email || null,
-    phone: customer.phone || destination.phone || null,
-    address: destination.address1 || destination.address || null,
+    phone: destination.phone || customer.phone || null,
+    address: destination.address1 || null,
+    address2: destination.address2 || null,
     city: destination.city || null,
     province: destination.province || destination.state || null,
     country: destination.country || 'AU',
-    postal_code: destination.postal_code || null
+    postal_code: destination.postal_code || null,
+    company: destination.company_name || destination.company || null
   };
 }
 
@@ -119,7 +136,8 @@ async function handleCarrierRates(req, res) {
     }
 
     // Postcode does NOT match any zone - show inquiry option
-    // Return inquiry rate so customer can see it, but checkout will be blocked via Checkout Extension
+    // Create draft order and inquiry now (we have all the data)
+    // Checkout extension will block checkout when customer clicks "Continue to Payment"
     console.log(`⚠️ [${requestId}] Postcode ${postcode} does not match any zone - showing inquiry option`);
 
     const customerInfo = extractCustomerInfo(req.body);
@@ -128,63 +146,98 @@ async function handleCarrierRates(req, res) {
     const rate = req.body?.rate || {};
     const destination = rate.destination || {};
 
-    let draftOrderId = null;
+    // Check if we already have a recent inquiry for this email (within last 60 min)
+    // This prevents duplicate draft orders when customer changes address
+    console.log(`🔍 [${requestId}] Checking for existing inquiry, Email: ${customerInfo.email || 'guest'}`);
 
-    // Create draft order in Shopify (so store can see the order)
-    // We create it immediately when inquiry option is shown
-    try {
-      const draftOrder = await createDraftOrder({
-        customer: {
-          first_name: customerInfo.first_name,
-          last_name: customerInfo.last_name,
+    const existingInquiry = await findRecentInquiry(customerInfo.email, null, 60);
+
+    if (existingInquiry) {
+      // Update existing inquiry with new address/postcode instead of creating duplicate
+      console.log(`♻️ [${requestId}] Found existing inquiry #${existingInquiry.id} - updating instead of creating new`);
+
+      try {
+        const fullAddress = customerInfo.address
+          ? `${customerInfo.address}, ${customerInfo.city || ''}, ${customerInfo.province || ''} ${postcode}`.trim()
+          : null;
+
+        await updateInquiry(existingInquiry.id, {
+          address: fullAddress,
+          postcode: postcode,
+          product_details: productDetails
+        });
+        console.log(`✅ [${requestId}] Inquiry #${existingInquiry.id} updated with new address`);
+      } catch (updateError) {
+        console.error(`❌ [${requestId}] Failed to update inquiry:`, updateError.message);
+      }
+
+      // Skip creating new draft order - we already have one
+      console.log(`⏭️ [${requestId}] Skipping draft order creation - using existing draft: ${existingInquiry.draft_order_id}`);
+    } else {
+      // No existing inquiry - create new draft order and inquiry
+      let draftOrderId = null;
+
+      // Create draft order in Shopify (store can see it immediately)
+      try {
+        const draftOrder = await createDraftOrder({
+          customer: {
+            first_name: customerInfo.first_name,
+            last_name: customerInfo.last_name,
+            email: customerInfo.email,
+            phone: customerInfo.phone
+          },
+          destination: {
+            name: customerInfo.name, // Full name from Shopify
+            first_name: customerInfo.first_name,
+            last_name: customerInfo.last_name,
+            address1: customerInfo.address,
+            address2: customerInfo.address2,
+            city: customerInfo.city,
+            province: customerInfo.province,
+            country: customerInfo.country,
+            postal_code: postcode,
+            phone: customerInfo.phone,
+            company_name: customerInfo.company
+          },
+          items: items
+        });
+        draftOrderId = draftOrder.id;
+        console.log(`✅ [${requestId}] Draft order created: ${draftOrderId}`);
+      } catch (draftError) {
+        console.error(`❌ [${requestId}] Failed to create draft order:`, draftError.message);
+        // Continue to create inquiry even if draft order fails
+      }
+
+      // Create inquiry record in database
+      try {
+        // Use full name if available, otherwise construct from first/last
+        const customerName = customerInfo.name
+          || (customerInfo.first_name && customerInfo.last_name
+            ? `${customerInfo.first_name} ${customerInfo.last_name}`.trim()
+            : customerInfo.first_name || 'Customer');
+
+        const inquiry = await createInquiry({
+          shop_order_id: null, // No real order yet (checkout will be blocked)
+          draft_order_id: draftOrderId,
+          customer_name: customerName,
           email: customerInfo.email,
-          phone: customerInfo.phone
-        },
-        destination: {
-          first_name: customerInfo.first_name,
-          last_name: customerInfo.last_name,
-          address1: customerInfo.address,
-          city: customerInfo.city,
-          province: customerInfo.province,
-          country: customerInfo.country,
-          postal_code: postcode,
-          phone: customerInfo.phone
-        },
-        items: items
-      });
-      draftOrderId = draftOrder.id;
-      console.log(`✅ [${requestId}] Draft order created: ${draftOrderId}`);
-    } catch (draftError) {
-      console.error(`❌ [${requestId}] Failed to create draft order:`, draftError.message);
-      // Continue to create inquiry even if draft order fails
+          phone: customerInfo.phone,
+          address: customerInfo.address
+            ? `${customerInfo.address}, ${customerInfo.city || ''}, ${customerInfo.province || ''} ${postcode}`.trim()
+            : null,
+          postcode: postcode,
+          product_details: productDetails,
+          status: 'new'
+        });
+        console.log(`✅ [${requestId}] Inquiry created: ${inquiry.id}`);
+      } catch (inquiryError) {
+        console.error(`❌ [${requestId}] Failed to create inquiry record:`, inquiryError.message);
+        // Continue to return response even if inquiry creation fails
+      }
     }
 
-    // Create inquiry record in database
-    try {
-      const inquiry = await createInquiry({
-        shop_order_id: null, // Will be set if store manually completes order later
-        draft_order_id: draftOrderId,
-        customer_name: customerInfo.first_name && customerInfo.last_name
-          ? `${customerInfo.first_name} ${customerInfo.last_name}`.trim()
-          : customerInfo.first_name || 'Customer',
-        email: customerInfo.email,
-        phone: customerInfo.phone,
-        address: customerInfo.address
-          ? `${customerInfo.address}, ${customerInfo.city || ''}, ${customerInfo.province || ''} ${customerInfo.postal_code || ''}`.trim()
-          : null,
-        postcode: postcode,
-        product_details: productDetails,
-        status: 'new'
-      });
-      console.log(`✅ [${requestId}] Inquiry created: ${inquiry.id}`);
-    } catch (inquiryError) {
-      console.error(`❌ [${requestId}] Failed to create inquiry record:`, inquiryError.message);
-      // Continue to return response even if inquiry creation fails
-    }
-
-    // Return inquiry rate so customer can see the option
-    // Blockit app (or custom checkout extension) will block checkout when this rate is selected
-    // Service code 'INQUIRY' is used by Blockit to detect and block checkout
+    // Return inquiry rate with detailed message
+    // Checkout extension will block checkout when customer clicks "Continue to Payment"
     const responseTime = Date.now() - startTime;
     console.log(`📤 [${requestId}] Carrier rates response: INQUIRY_OPTION (${responseTime}ms)`);
 
@@ -194,7 +247,7 @@ async function handleCarrierRates(req, res) {
         service_code: 'INQUIRY',
         total_price: '0',
         currency: req.body?.rate?.currency || 'AUD',
-        description: 'No automated rate for this postcode; store will contact you to finalize shipping. If delivery is possible, you will receive your order.'
+        description: 'No automated rate for this postcode; store will contact you to finalize shipping. If delivery is possible, you will receive your order. Please note: Your inquiry has been submitted and our team will review your delivery address. We will contact you via email or phone within 24-48 hours to confirm shipping availability and provide a custom shipping quote if delivery is possible.'
       }]
     });
 

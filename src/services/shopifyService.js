@@ -21,6 +21,35 @@ async function createDraftOrder(orderData) {
     const items = orderData.items || [];
     const destination = orderData.destination || {};
 
+    // Parse name - Shopify sometimes sends full name in 'name' field
+    let firstName = customer.first_name || destination.first_name || '';
+    let lastName = customer.last_name || destination.last_name || '';
+    
+    // If we have a 'name' field but no first/last, try to split it
+    if (!firstName && !lastName && destination.name) {
+      const nameParts = destination.name.trim().split(' ');
+      firstName = nameParts[0] || 'Customer';
+      lastName = nameParts.slice(1).join(' ') || '';
+    }
+    
+    // Default if still empty
+    if (!firstName) firstName = 'Customer';
+
+    const email = customer.email || destination.email || '';
+    const phone = customer.phone || destination.phone || '';
+    const postcode = destination.postal_code || destination.postcode || 'Unknown';
+
+    // Log what we received for debugging
+    console.log('📝 Creating draft order with data:', {
+      firstName,
+      lastName,
+      email: email || '(not provided)',
+      phone: phone || '(not provided)',
+      address: destination.address1 || destination.address || '(not provided)',
+      city: destination.city || '(not provided)',
+      postcode
+    });
+
     // Build line items for draft order
     const lineItems = items.map(item => ({
       title: item.title || 'Product',
@@ -29,30 +58,43 @@ async function createDraftOrder(orderData) {
       grams: item.grams || 0
     }));
 
+    // Build shipping address
+    const shippingAddress = {
+      first_name: firstName,
+      last_name: lastName,
+      address1: destination.address1 || destination.address || '',
+      address2: destination.address2 || '',
+      city: destination.city || '',
+      province: destination.province || destination.state || '',
+      country: destination.country || 'AU',
+      zip: postcode,
+      phone: phone,
+      company: destination.company_name || destination.company || ''
+    };
+
     // Build draft order payload
+    // Note: We only include customer object if we have an email (required by Shopify)
     const draftOrderPayload = {
       draft_order: {
         line_items: lineItems,
-        customer: {
-          first_name: customer.first_name || destination.first_name || 'Customer',
-          last_name: customer.last_name || destination.last_name || '',
-          email: customer.email || destination.email || '',
-          phone: customer.phone || destination.phone || ''
-        },
-        shipping_address: {
-          first_name: destination.first_name || customer.first_name || 'Customer',
-          last_name: destination.last_name || customer.last_name || '',
-          address1: destination.address1 || destination.address || '',
-          city: destination.city || '',
-          province: destination.province || destination.state || '',
-          country: destination.country || 'AU',
-          zip: destination.postal_code || destination.postcode || '',
-          phone: destination.phone || customer.phone || ''
-        },
-        note: `Shipping inquiry required for postcode: ${destination.postal_code || destination.postcode || 'Unknown'}. This order requires manual shipping quote. Customer checkout was blocked due to out-of-zone delivery.`,
+        shipping_address: shippingAddress,
+        note: `📍 SHIPPING INQUIRY - Out of Zone\n\nPostcode: ${postcode}\nCustomer: ${firstName} ${lastName}\nPhone: ${phone || 'Not provided'}\nAddress: ${shippingAddress.address1}, ${shippingAddress.city}, ${shippingAddress.province} ${postcode}\n\n⚠️ This order requires manual shipping quote. Checkout was blocked - customer is waiting for contact.`,
         tags: 'shipping-inquiry,manual-quote,checkout-blocked'
       }
     };
+
+    // Only add customer if we have email (Shopify requires email to create/link customer)
+    if (email) {
+      draftOrderPayload.draft_order.customer = {
+        first_name: firstName,
+        last_name: lastName,
+        email: email,
+        phone: phone
+      };
+    }
+
+    // Also set billing address same as shipping
+    draftOrderPayload.draft_order.billing_address = shippingAddress;
 
     const response = await axios.post(
       `${apiUrl}/draft_orders.json`,
@@ -60,6 +102,7 @@ async function createDraftOrder(orderData) {
       { headers }
     );
 
+    console.log('✅ Draft order created:', response.data.draft_order?.id);
     return response.data.draft_order;
   } catch (error) {
     // Log detailed error for debugging

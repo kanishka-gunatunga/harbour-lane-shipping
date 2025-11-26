@@ -35,11 +35,11 @@ coverage/
 # Documentation files (keep important guides)
 *.md
 !README.md
-!BLOCKIT_SETUP_GUIDE.md
 !IMPLEMENTATION_PLAN.md
-!QUICK_START_BLOCKIT.md
 !DEPLOYMENT_README.md
 !PRE_DEPLOYMENT_CHECKLIST.md
+!ORDER_FLOW_EXPLANATION.md
+!CHECKOUT_EXTENSION_SETUP.md
 
 # Database dumps (but keep schema.sql)
 *.db
