@@ -72,18 +72,34 @@ async function ensureCacheFresh() {
  * Find matching warehouse zone for a postcode
  * Returns warehouse info if match found, null otherwise
  * Handles database/cache errors gracefully
+ * Optimized for fast response times (< 100ms)
  */
 async function findMatchingZone(postcode) {
-  try {
-    await ensureCacheFresh();
-  } catch (error) {
-    console.warn('⚠️  Error ensuring cache fresh:', error.message);
-    // Continue with existing cache or empty cache
-  }
+  const lookupStart = Date.now();
   
+  // Normalize postcode first (fast, no async)
   const normalized = normalizePostcode(postcode);
   if (!normalized) {
     return null;
+  }
+  
+  // Check cache first (fast path - no database call if cache is fresh)
+  const cacheAge = cacheTimestamp ? Date.now() - cacheTimestamp : Infinity;
+  const isCacheFresh = zonesCache && cacheAge < CACHE_TTL;
+  
+  // Only refresh cache if it's expired or missing (non-blocking if possible)
+  if (!isCacheFresh) {
+    try {
+      // Use Promise.race to ensure we don't wait too long for cache refresh
+      // If cache refresh takes > 200ms, continue with existing cache or empty
+      await Promise.race([
+        ensureCacheFresh(),
+        new Promise((resolve) => setTimeout(resolve, 200)) // 200ms timeout
+      ]);
+    } catch (error) {
+      console.warn('⚠️  Error ensuring cache fresh:', error.message);
+      // Continue with existing cache or empty cache
+    }
   }
   
   // If cache is empty or null, return null (will trigger inquiry)

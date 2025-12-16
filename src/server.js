@@ -6,10 +6,11 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const compression = require('compression');
 const { testConnection } = require('./db/config');
 const { loadZonesCache, getCacheStatus } = require('./services/zoneService');
 const { validateEnvironment } = require('./utils/envValidator');
-const { authenticateApiKey, createRateLimiter, validateInput } = require('./middleware/security');
+const { authenticateApiKey, createRateLimiter, validateInput, addSecurityHeaders } = require('./middleware/security');
 
 // Import routes
 const { handleCarrierRates } = require('./routes/rates');
@@ -58,6 +59,11 @@ const corsOptions = {
 
 // Middleware
 app.use(cors(corsOptions));
+// Compression for better performance (gzip responses)
+app.use(compression());
+// Security headers
+app.use(addSecurityHeaders);
+// Body parsing with size limits
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -143,16 +149,34 @@ app.put('/inquiries/:id/status', inquiriesRoutes.updateInquiryStatusRoute);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
+  console.error('Unhandled error:', {
+    message: err.message,
+    stack: NODE_ENV === 'development' ? err.stack : undefined,
+    path: req.path,
+    method: req.method,
+    timestamp: new Date().toISOString()
+  });
 
   // Don't expose error details in production
   const isProduction = NODE_ENV === 'production';
   const statusCode = err.statusCode || 500;
 
+  // Don't leak database errors or stack traces
+  let errorMessage = 'An error occurred';
+  if (!isProduction) {
+    errorMessage = err.message;
+  } else if (err.code && err.code.startsWith('ER_')) {
+    // Database errors - generic message
+    errorMessage = 'Database operation failed';
+  }
+
   res.status(statusCode).json({
     error: 'Internal server error',
-    message: isProduction ? 'An error occurred' : err.message,
-    ...(isProduction ? {} : { stack: err.stack })
+    message: errorMessage,
+    ...(isProduction ? {} : {
+      stack: err.stack,
+      code: err.code
+    })
   });
 });
 
