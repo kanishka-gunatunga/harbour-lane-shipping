@@ -15,7 +15,7 @@ async function createDraftOrder(orderData) {
   try {
     const apiUrl = getAdminApiUrl();
     const headers = getAdminHeaders();
-
+    
     // Extract customer info from carrier request
     const customer = orderData.customer || {};
     const items = orderData.items || [];
@@ -49,7 +49,7 @@ async function createDraftOrder(orderData) {
       city: destination.city || '(not provided)',
       postcode
     });
-
+    
     // Build line items for draft order
     const lineItems = items.map(item => ({
       title: item.title || 'Product',
@@ -71,7 +71,7 @@ async function createDraftOrder(orderData) {
       phone: phone,
       company: destination.company_name || destination.company || ''
     };
-
+    
     // Build draft order payload
     // Note: We only include customer object if we have an email (required by Shopify)
     const draftOrderPayload = {
@@ -95,13 +95,13 @@ async function createDraftOrder(orderData) {
 
     // Also set billing address same as shipping
     draftOrderPayload.draft_order.billing_address = shippingAddress;
-
+    
     const response = await axios.post(
       `${apiUrl}/draft_orders.json`,
       draftOrderPayload,
       { headers }
     );
-
+    
     console.log('✅ Draft order created:', response.data.draft_order?.id);
     return response.data.draft_order;
   } catch (error) {
@@ -124,7 +124,7 @@ async function registerCarrierService(callbackUrl) {
   try {
     const apiUrl = getAdminApiUrl();
     const headers = getAdminHeaders();
-
+    
     const payload = {
       carrier_service: {
         name: 'Harbour Lane Delivery',
@@ -132,13 +132,13 @@ async function registerCarrierService(callbackUrl) {
         service_discovery: true
       }
     };
-
+    
     const response = await axios.post(
       `${apiUrl}/carrier_services.json`,
       payload,
       { headers }
     );
-
+    
     return response.data.carrier_service;
   } catch (error) {
     if (error.response?.status === 422 && error.response?.data?.errors) {
@@ -157,12 +157,12 @@ async function getCarrierServices() {
   try {
     const apiUrl = getAdminApiUrl();
     const headers = getAdminHeaders();
-
+    
     const response = await axios.get(
       `${apiUrl}/carrier_services.json`,
       { headers }
     );
-
+    
     return response.data.carrier_services;
   } catch (error) {
     console.error('Error fetching carrier services:', error.response?.data || error.message);
@@ -180,7 +180,7 @@ async function updateCarrierService(carrierServiceId, callbackUrl) {
   try {
     const apiUrl = getAdminApiUrl();
     const headers = getAdminHeaders();
-
+    
     const payload = {
       carrier_service: {
         id: carrierServiceId,
@@ -188,13 +188,13 @@ async function updateCarrierService(carrierServiceId, callbackUrl) {
         service_discovery: true
       }
     };
-
+    
     const response = await axios.put(
       `${apiUrl}/carrier_services/${carrierServiceId}.json`,
       payload,
       { headers }
     );
-
+    
     return response.data.carrier_service;
   } catch (error) {
     console.error('Error updating carrier service:', error.response?.data || error.message);

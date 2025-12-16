@@ -92,16 +92,27 @@ app.get('/health', async (req, res) => {
     // Don't expose detailed error messages in production
     const isProduction = NODE_ENV === 'production';
 
+    // Calculate cache age
+    const cacheAge = cacheStatus.timestamp ? Math.floor((Date.now() - cacheStatus.timestamp) / 1000) : null;
+    const cacheAgeMinutes = cacheAge ? Math.floor(cacheAge / 60) : null;
+
     res.json({
-      status: dbStatus.success ? 'ok' : 'error',
+      status: dbStatus.success && cacheStatus.loaded && cacheStatus.count > 0 ? 'ok' : 'warning',
       timestamp: new Date().toISOString(),
       database: isProduction
         ? { success: dbStatus.success }
         : dbStatus,
       zonesCache: {
         loaded: cacheStatus.loaded,
-        count: isProduction ? undefined : cacheStatus.count,
-        status: cacheStatus.loaded ? 'loaded' : 'not loaded'
+        count: cacheStatus.count,
+        ageSeconds: cacheAge,
+        ageMinutes: cacheAgeMinutes,
+        status: cacheStatus.loaded && cacheStatus.count > 0
+          ? `loaded (${cacheStatus.count} zones)`
+          : cacheStatus.loaded
+            ? 'empty (no zones found)'
+            : 'not loaded',
+        warning: cacheStatus.count === 0 ? 'No zones in cache - all postcodes will show inquiry option' : null
       },
       environment: isProduction ? 'production' : NODE_ENV
     });
