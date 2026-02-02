@@ -6,21 +6,35 @@
 /**
  * Simple API key authentication middleware
  * Protects admin endpoints with API key from environment variable
+ * 
+ * SECURITY: If API_KEY is not set, admin endpoints are BLOCKED (not open)
  */
 function authenticateApiKey(req, res, next) {
-  // Skip authentication for carrier rates endpoint (called by Shopify)
-  if (req.path === '/carrier/rates' || req.path === '/health') {
+  // Public endpoints that don't require authentication
+  const publicPaths = [
+    '/carrier/rates',  // Called by Shopify
+    '/health',         // Health check
+    '/'                // Root info
+  ];
+
+  // Skip authentication for public endpoints
+  if (publicPaths.includes(req.path)) {
     return next();
   }
 
   const apiKey = req.headers['x-api-key'] || req.headers['authorization']?.replace('Bearer ', '');
   const expectedApiKey = process.env.API_KEY;
 
+  // SECURITY: If API_KEY is not configured, BLOCK all admin endpoints
   if (!expectedApiKey) {
-    console.warn('API_KEY not set in environment - admin endpoints are unprotected');
-    return next();
+    console.error('SECURITY WARNING: API_KEY not set - blocking admin endpoint access');
+    return res.status(503).json({
+      error: 'Service Unavailable',
+      message: 'Admin endpoints are not configured. Please set API_KEY environment variable.'
+    });
   }
 
+  // Check if valid API key is provided
   if (!apiKey || apiKey !== expectedApiKey) {
     return res.status(401).json({
       error: 'Unauthorized',
