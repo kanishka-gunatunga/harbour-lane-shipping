@@ -6,24 +6,19 @@
 const mysql = require('mysql2/promise');
 require('dotenv').config();
 
-// Optimized for serverless environments (Vercel)
-// Longer timeouts for cold starts and network latency
 const dbConfig = {
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '',
   database: process.env.DB_NAME || 'harbour_lane_shipping',
   waitForConnections: true,
-  connectionLimit: process.env.VERCEL ? 2 : 10, // Lower limit for serverless
+  connectionLimit: 10,
   queueLimit: 0,
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
-  connectTimeout: 20000, // 20 seconds (increased for serverless)
-  acquireTimeout: 20000, // 20 seconds to get connection from pool
-  timeout: 15000, // 15 seconds query timeout
-  // Additional options for better reliability
-  reconnect: true,
-  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false
+  connectTimeout: 10000, // 10 seconds timeout
+  acquireTimeout: 10000, // 10 seconds to get connection from pool
+  timeout: 10000 // 10 seconds query timeout
 };
 
 // Create connection pool
@@ -53,38 +48,20 @@ async function testConnection(retries = 3, delay = 2000) {
 
 /**
  * Execute a query with error handling and retry logic
- * Enhanced for serverless environments with exponential backoff
  */
-async function query(sql, params, retries = 3) {
+async function query(sql, params, retries = 2) {
   for (let i = 0; i < retries; i++) {
     try {
       const [results] = await pool.execute(sql, params);
       return results;
     } catch (error) {
-      const isConnectionError = 
-        error.code === 'ETIMEDOUT' || 
-        error.code === 'ECONNREFUSED' || 
-        error.code === 'PROTOCOL_CONNECTION_LOST' ||
-        error.code === 'ENOTFOUND' ||
-        error.message?.includes('timeout') ||
-        error.message?.includes('disconnected');
-      
-      // If it's a connection error and we have retries left, retry with exponential backoff
-      if (i < retries - 1 && isConnectionError) {
-        const delay = Math.min(1000 * Math.pow(2, i), 5000); // Exponential backoff, max 5s
-        console.warn(`Database query failed (attempt ${i + 1}/${retries}), retrying in ${delay}ms...`, error.message);
-        await new Promise(resolve => setTimeout(resolve, delay));
+      // If it's a connection error and we have retries left, retry
+      if (i < retries - 1 && (error.code === 'ETIMEDOUT' || error.code === 'ECONNREFUSED' || error.code === 'PROTOCOL_CONNECTION_LOST')) {
+        console.warn(`Database query failed (attempt ${i + 1}/${retries}), retrying...`, error.message);
+        await new Promise(resolve => setTimeout(resolve, 1000));
         continue;
       }
-      
-      // If it's the last retry or not a connection error, log and throw
-      if (i === retries - 1) {
-        console.error(`Database query failed after ${retries} attempts:`, {
-          code: error.code,
-          message: error.message,
-          sql: sql.substring(0, 100) // Log first 100 chars of SQL
-        });
-      }
+      console.error('Database query error:', error);
       throw error;
     }
   }

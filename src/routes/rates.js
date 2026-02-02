@@ -115,15 +115,7 @@ async function handleCarrierRates(req, res) {
     }
 
     // Find matching zone for postcode
-    // This should be fast (< 100ms) due to in-memory cache
-    const zoneLookupStart = Date.now();
     const matchingZone = await findMatchingZone(postcode);
-    const zoneLookupTime = Date.now() - zoneLookupStart;
-
-    // Warn if zone lookup is slow (might indicate cache issues)
-    if (zoneLookupTime > 500) {
-      console.warn(`⚠️ [${requestId}] Zone lookup took ${zoneLookupTime}ms (expected < 100ms) - cache may need refresh`);
-    }
 
     if (matchingZone) {
       // Postcode matches a warehouse zone - return standard rate
@@ -131,11 +123,6 @@ async function handleCarrierRates(req, res) {
 
       const responseTime = Date.now() - startTime;
       console.log(`📤 [${requestId}] Carrier rates response: MATCH (${responseTime}ms) - Rate: $${(STANDARD_RATE / 100).toFixed(2)}`);
-
-      // Warn if total response time is approaching Shopify timeout (5-10 seconds)
-      if (responseTime > 3000) {
-        console.warn(`⚠️ [${requestId}] Response time is ${responseTime}ms - approaching Shopify timeout threshold`);
-      }
 
       return res.json({
         rates: [{
@@ -149,7 +136,7 @@ async function handleCarrierRates(req, res) {
     }
 
     // Postcode does NOT match any zone - show inquiry option
-    // Create draft order and inquiry in background (non-blocking) to ensure fast response
+    // Create draft order and inquiry now (we have all the data)
     // Checkout extension will block checkout when customer clicks "Continue to Payment"
     console.log(`⚠️ [${requestId}] Postcode ${postcode} does not match any zone - showing inquiry option`);
 
@@ -159,19 +146,102 @@ async function handleCarrierRates(req, res) {
     const rate = req.body?.rate || {};
     const destination = rate.destination || {};
 
-    // CRITICAL: Return response immediately to avoid Shopify timeout
-    // Create draft order and inquiry in background (non-blocking)
-    // This ensures we respond within Shopify's 5-10 second timeout window
-    const responseTime = Date.now() - startTime;
-    console.log(`📤 [${requestId}] Carrier rates response: INQUIRY_OPTION (${responseTime}ms) - returning immediately, creating draft order in background`);
+    // Check if we already have a recent inquiry for this email (within last 60 min)
+    // This prevents duplicate draft orders when customer changes address
+    console.log(`🔍 [${requestId}] Checking for existing inquiry, Email: ${customerInfo.email || 'guest'}`);
 
-    // Warn if response time is already high (should be < 500ms for inquiry option)
-    if (responseTime > 1000) {
-      console.warn(`⚠️ [${requestId}] Response time is ${responseTime}ms before returning inquiry option - may indicate slow zone lookup`);
+    const existingInquiry = await findRecentInquiry(customerInfo.email, null, 60);
+
+    if (existingInquiry) {
+      // Update existing inquiry with new address/postcode instead of creating duplicate
+      console.log(`♻️ [${requestId}] Found existing inquiry #${existingInquiry.id} - updating instead of creating new`);
+
+      try {
+        const fullAddress = customerInfo.address
+          ? `${customerInfo.address}, ${customerInfo.city || ''}, ${customerInfo.province || ''} ${postcode}`.trim()
+          : null;
+
+        await updateInquiry(existingInquiry.id, {
+          address: fullAddress,
+          postcode: postcode,
+          product_details: productDetails
+        });
+        console.log(`✅ [${requestId}] Inquiry #${existingInquiry.id} updated with new address`);
+      } catch (updateError) {
+        console.error(`❌ [${requestId}] Failed to update inquiry:`, updateError.message);
+      }
+
+      // Skip creating new draft order - we already have one
+      console.log(`⏭️ [${requestId}] Skipping draft order creation - using existing draft: ${existingInquiry.draft_order_id}`);
+    } else {
+      // No existing inquiry - create new draft order and inquiry
+      let draftOrderId = null;
+
+      // Create draft order in Shopify (store can see it immediately)
+      try {
+        const draftOrder = await createDraftOrder({
+          customer: {
+            first_name: customerInfo.first_name,
+            last_name: customerInfo.last_name,
+            email: customerInfo.email,
+            phone: customerInfo.phone
+          },
+          destination: {
+            name: customerInfo.name, // Full name from Shopify
+            first_name: customerInfo.first_name,
+            last_name: customerInfo.last_name,
+            address1: customerInfo.address,
+            address2: customerInfo.address2,
+            city: customerInfo.city,
+            province: customerInfo.province,
+            country: customerInfo.country,
+            postal_code: postcode,
+            phone: customerInfo.phone,
+            company_name: customerInfo.company
+          },
+          items: items
+        });
+        draftOrderId = draftOrder.id;
+        console.log(`✅ [${requestId}] Draft order created: ${draftOrderId}`);
+      } catch (draftError) {
+        console.error(`❌ [${requestId}] Failed to create draft order:`, draftError.message);
+        // Continue to create inquiry even if draft order fails
+      }
+
+      // Create inquiry record in database
+      try {
+        // Use full name if available, otherwise construct from first/last
+        const customerName = customerInfo.name
+          || (customerInfo.first_name && customerInfo.last_name
+            ? `${customerInfo.first_name} ${customerInfo.last_name}`.trim()
+            : customerInfo.first_name || 'Customer');
+
+        const inquiry = await createInquiry({
+          shop_order_id: null, // No real order yet (checkout will be blocked)
+          draft_order_id: draftOrderId,
+          customer_name: customerName,
+          email: customerInfo.email,
+          phone: customerInfo.phone,
+          address: customerInfo.address
+            ? `${customerInfo.address}, ${customerInfo.city || ''}, ${customerInfo.province || ''} ${postcode}`.trim()
+            : null,
+          postcode: postcode,
+          product_details: productDetails,
+          status: 'new'
+        });
+        console.log(`✅ [${requestId}] Inquiry created: ${inquiry.id}`);
+      } catch (inquiryError) {
+        console.error(`❌ [${requestId}] Failed to create inquiry record:`, inquiryError.message);
+        // Continue to return response even if inquiry creation fails
+      }
     }
 
-    // Return response immediately (non-blocking)
-    res.json({
+    // Return inquiry rate with detailed message
+    // Checkout extension will block checkout when customer clicks "Continue to Payment"
+    const responseTime = Date.now() - startTime;
+    console.log(`📤 [${requestId}] Carrier rates response: INQUIRY_OPTION (${responseTime}ms)`);
+
+    return res.json({
       rates: [{
         service_name: 'Inquiry Required — We will contact you',
         service_code: 'INQUIRY',
@@ -179,104 +249,6 @@ async function handleCarrierRates(req, res) {
         currency: req.body?.rate?.currency || 'AUD',
         description: 'No automated rate for this postcode; store will contact you to finalize shipping. If delivery is possible, you will receive your order. Please note: Your inquiry has been submitted and our team will review your delivery address. We will contact you via email or phone within 24-48 hours to confirm shipping availability and provide a custom shipping quote if delivery is possible.'
       }]
-    });
-
-    // Create draft order and inquiry in background (non-blocking)
-    // This prevents blocking the response and avoids Shopify timeout
-    setImmediate(async () => {
-      try {
-        // Check if we already have a recent inquiry for this email (within last 60 min)
-        // This prevents duplicate draft orders when customer changes address
-        console.log(`🔍 [${requestId}] [BACKGROUND] Checking for existing inquiry, Email: ${customerInfo.email || 'guest'}`);
-
-        const existingInquiry = await findRecentInquiry(customerInfo.email, null, 60);
-
-        if (existingInquiry) {
-          // Update existing inquiry with new address/postcode instead of creating duplicate
-          console.log(`♻️ [${requestId}] [BACKGROUND] Found existing inquiry #${existingInquiry.id} - updating instead of creating new`);
-
-          try {
-            const fullAddress = customerInfo.address
-              ? `${customerInfo.address}, ${customerInfo.city || ''}, ${customerInfo.province || ''} ${postcode}`.trim()
-              : null;
-
-            await updateInquiry(existingInquiry.id, {
-              address: fullAddress,
-              postcode: postcode,
-              product_details: productDetails
-            });
-            console.log(`✅ [${requestId}] [BACKGROUND] Inquiry #${existingInquiry.id} updated with new address`);
-          } catch (updateError) {
-            console.error(`❌ [${requestId}] [BACKGROUND] Failed to update inquiry:`, updateError.message);
-          }
-
-          // Skip creating new draft order - we already have one
-          console.log(`⏭️ [${requestId}] [BACKGROUND] Skipping draft order creation - using existing draft: ${existingInquiry.draft_order_id}`);
-        } else {
-          // No existing inquiry - create new draft order and inquiry
-          let draftOrderId = null;
-
-          // Create draft order in Shopify (store can see it immediately)
-          try {
-            const draftOrder = await createDraftOrder({
-              customer: {
-                first_name: customerInfo.first_name,
-                last_name: customerInfo.last_name,
-                email: customerInfo.email,
-                phone: customerInfo.phone
-              },
-              destination: {
-                name: customerInfo.name, // Full name from Shopify
-                first_name: customerInfo.first_name,
-                last_name: customerInfo.last_name,
-                address1: customerInfo.address,
-                address2: customerInfo.address2,
-                city: customerInfo.city,
-                province: customerInfo.province,
-                country: customerInfo.country,
-                postal_code: postcode,
-                phone: customerInfo.phone,
-                company_name: customerInfo.company
-              },
-              items: items
-            });
-            draftOrderId = draftOrder.id;
-            console.log(`✅ [${requestId}] [BACKGROUND] Draft order created: ${draftOrderId}`);
-          } catch (draftError) {
-            console.error(`❌ [${requestId}] [BACKGROUND] Failed to create draft order:`, draftError.message);
-            // Continue to create inquiry even if draft order fails
-          }
-
-          // Create inquiry record in database
-          try {
-            // Use full name if available, otherwise construct from first/last
-            const customerName = customerInfo.name
-              || (customerInfo.first_name && customerInfo.last_name
-                ? `${customerInfo.first_name} ${customerInfo.last_name}`.trim()
-                : customerInfo.first_name || 'Customer');
-
-            const inquiry = await createInquiry({
-              shop_order_id: null, // No real order yet (checkout will be blocked)
-              draft_order_id: draftOrderId,
-              customer_name: customerName,
-              email: customerInfo.email,
-              phone: customerInfo.phone,
-              address: customerInfo.address
-                ? `${customerInfo.address}, ${customerInfo.city || ''}, ${customerInfo.province || ''} ${postcode}`.trim()
-                : null,
-              postcode: postcode,
-              product_details: productDetails,
-              status: 'new'
-            });
-            console.log(`✅ [${requestId}] [BACKGROUND] Inquiry created: ${inquiry.id}`);
-          } catch (inquiryError) {
-            console.error(`❌ [${requestId}] [BACKGROUND] Failed to create inquiry record:`, inquiryError.message);
-          }
-        }
-      } catch (backgroundError) {
-        // Log but don't throw - response already sent
-        console.error(`❌ [${requestId}] [BACKGROUND] Error in background draft order/inquiry creation:`, backgroundError.message);
-      }
     });
 
   } catch (error) {

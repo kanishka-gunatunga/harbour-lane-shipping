@@ -6,11 +6,10 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const compression = require('compression');
 const { testConnection } = require('./db/config');
 const { loadZonesCache, getCacheStatus } = require('./services/zoneService');
 const { validateEnvironment } = require('./utils/envValidator');
-const { authenticateApiKey, createRateLimiter, validateInput, addSecurityHeaders } = require('./middleware/security');
+const { authenticateApiKey, createRateLimiter, validateInput } = require('./middleware/security');
 
 // Import routes
 const { handleCarrierRates } = require('./routes/rates');
@@ -59,11 +58,6 @@ const corsOptions = {
 
 // Middleware
 app.use(cors(corsOptions));
-// Compression for better performance (gzip responses)
-app.use(compression());
-// Security headers
-app.use(addSecurityHeaders);
-// Body parsing with size limits
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -92,27 +86,16 @@ app.get('/health', async (req, res) => {
     // Don't expose detailed error messages in production
     const isProduction = NODE_ENV === 'production';
 
-    // Calculate cache age
-    const cacheAge = cacheStatus.timestamp ? Math.floor((Date.now() - cacheStatus.timestamp) / 1000) : null;
-    const cacheAgeMinutes = cacheAge ? Math.floor(cacheAge / 60) : null;
-
     res.json({
-      status: dbStatus.success && cacheStatus.loaded && cacheStatus.count > 0 ? 'ok' : 'warning',
+      status: dbStatus.success ? 'ok' : 'error',
       timestamp: new Date().toISOString(),
       database: isProduction
         ? { success: dbStatus.success }
         : dbStatus,
       zonesCache: {
         loaded: cacheStatus.loaded,
-        count: cacheStatus.count,
-        ageSeconds: cacheAge,
-        ageMinutes: cacheAgeMinutes,
-        status: cacheStatus.loaded && cacheStatus.count > 0
-          ? `loaded (${cacheStatus.count} zones)`
-          : cacheStatus.loaded
-            ? 'empty (no zones found)'
-            : 'not loaded',
-        warning: cacheStatus.count === 0 ? 'No zones in cache - all postcodes will show inquiry option' : null
+        count: isProduction ? undefined : cacheStatus.count,
+        status: cacheStatus.loaded ? 'loaded' : 'not loaded'
       },
       environment: isProduction ? 'production' : NODE_ENV
     });
@@ -160,34 +143,16 @@ app.put('/inquiries/:id/status', inquiriesRoutes.updateInquiryStatusRoute);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error('Unhandled error:', {
-    message: err.message,
-    stack: NODE_ENV === 'development' ? err.stack : undefined,
-    path: req.path,
-    method: req.method,
-    timestamp: new Date().toISOString()
-  });
+  console.error('Unhandled error:', err);
 
   // Don't expose error details in production
   const isProduction = NODE_ENV === 'production';
   const statusCode = err.statusCode || 500;
 
-  // Don't leak database errors or stack traces
-  let errorMessage = 'An error occurred';
-  if (!isProduction) {
-    errorMessage = err.message;
-  } else if (err.code && err.code.startsWith('ER_')) {
-    // Database errors - generic message
-    errorMessage = 'Database operation failed';
-  }
-
   res.status(statusCode).json({
     error: 'Internal server error',
-    message: errorMessage,
-    ...(isProduction ? {} : {
-      stack: err.stack,
-      code: err.code
-    })
+    message: isProduction ? 'An error occurred' : err.message,
+    ...(isProduction ? {} : { stack: err.stack })
   });
 });
 
