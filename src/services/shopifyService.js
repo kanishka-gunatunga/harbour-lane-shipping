@@ -6,6 +6,71 @@
 const axios = require('axios');
 const { getAdminApiUrl, getAdminHeaders } = require('../config/shopify');
 
+const PRODUCT_TAG_CACHE_TTL_MS = 15 * 60 * 1000;
+const productTagCache = new Map();
+
+function parseProductTags(tagsString) {
+  if (!tagsString) return [];
+  return tagsString.split(',').map(tag => tag.trim()).filter(Boolean);
+}
+
+/**
+ * Fetch product tags from Shopify Admin API (cached).
+ * Carrier service callbacks include product_id but not tags.
+ */
+async function getProductTags(productId) {
+  const cached = productTagCache.get(productId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.tags;
+  }
+
+  const apiUrl = getAdminApiUrl();
+  const headers = getAdminHeaders();
+
+  const response = await axios.get(
+    `${apiUrl}/products/${productId}.json?fields=id,tags`,
+    { headers, timeout: 5000 }
+  );
+
+  const tags = parseProductTags(response.data?.product?.tags);
+  productTagCache.set(productId, {
+    tags,
+    expiresAt: Date.now() + PRODUCT_TAG_CACHE_TTL_MS
+  });
+
+  return tags;
+}
+
+/**
+ * Returns true when any cart line item's product has the configured luxury tag.
+ */
+async function cartHasLuxuryTag(items) {
+  const luxuryTag = (process.env.LUXURY_FREE_SHIPPING_TAG || 'luxury').toLowerCase();
+  const productIds = [...new Set(
+    (items || [])
+      .map(item => item.product_id)
+      .filter(Boolean)
+  )];
+
+  if (productIds.length === 0) {
+    console.warn('Luxury check skipped: no product_id values in carrier request items');
+    return false;
+  }
+
+  for (const productId of productIds) {
+    try {
+      const tags = await getProductTags(productId);
+      if (tags.some(tag => tag.toLowerCase() === luxuryTag)) {
+        return true;
+      }
+    } catch (error) {
+      console.error(`Failed to fetch tags for product ${productId}:`, error.response?.data || error.message);
+    }
+  }
+
+  return false;
+}
+
 /**
  * Create a draft order in Shopify
  * @param {Object} orderData - Order data from carrier request or webhook
@@ -52,7 +117,7 @@ async function createDraftOrder(orderData) {
     
     // Build line items for draft order
     const lineItems = items.map(item => ({
-      title: item.title || 'Product',
+      title: item.name || item.title || 'Product',
       quantity: item.quantity || 1,
       price: item.price ? String(item.price / 100) : '0.00', // Shopify expects decimal string
       grams: item.grams || 0
@@ -206,6 +271,8 @@ module.exports = {
   createDraftOrder,
   registerCarrierService,
   getCarrierServices,
-  updateCarrierService
+  updateCarrierService,
+  getProductTags,
+  cartHasLuxuryTag
 };
 

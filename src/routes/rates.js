@@ -6,7 +6,7 @@
 
 const { findMatchingZone } = require('../services/zoneService');
 const { createInquiry, findRecentInquiry, updateInquiry } = require('../services/inquiryService');
-const { createDraftOrder } = require('../services/shopifyService');
+const { createDraftOrder, cartHasLuxuryTag } = require('../services/shopifyService');
 const { extractPostcodeFromPayload } = require('../utils/postcode');
 
 // Standard shipping rate in cents (AUD $59.00)
@@ -18,7 +18,7 @@ const STANDARD_RATE = 5900;
 function formatProductDetails(items) {
   if (!items || !Array.isArray(items)) return null;
   return items.map(item => ({
-    title: item.title || 'Product',
+    title: item.name || item.title || 'Product',
     quantity: item.quantity || 1,
     price: item.price || 0,
     grams: item.grams || 0
@@ -95,6 +95,26 @@ async function handleCarrierRates(req, res) {
     };
     console.log(`📦 [${requestId}] Carrier rates request received:`, JSON.stringify(requestLog, null, 2));
 
+    const items = req.body?.rate?.items || [];
+    const currency = req.body?.rate?.currency || 'AUD';
+
+    // Luxury-tagged products get free shipping for the entire order (any mix of items).
+    const hasLuxuryItem = await cartHasLuxuryTag(items);
+    if (hasLuxuryItem) {
+      const responseTime = Date.now() - startTime;
+      console.log(`✨ [${requestId}] Luxury item detected - returning free shipping (${responseTime}ms)`);
+
+      return res.json({
+        rates: [{
+          service_name: 'Complimentary Delivery',
+          service_code: 'FREE_LUXURY',
+          total_price: '0',
+          currency,
+          description: 'Complimentary shipping on luxury items'
+        }]
+      });
+    }
+
     // Extract postcode from payload
     const postcode = extractPostcodeFromPayload(req.body);
 
@@ -141,7 +161,6 @@ async function handleCarrierRates(req, res) {
     console.log(`⚠️ [${requestId}] Postcode ${postcode} does not match any zone - showing inquiry option`);
 
     const customerInfo = extractCustomerInfo(req.body);
-    const items = req.body?.rate?.items || [];
     const productDetails = formatProductDetails(items);
     const rate = req.body?.rate || {};
     const destination = rate.destination || {};
